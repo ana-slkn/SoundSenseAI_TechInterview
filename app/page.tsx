@@ -24,20 +24,20 @@ import {
   rules,
   type Finding,
 } from '@/lib/reviews';
-type Review = {
-  decision: string;
-  notes: string;
-  findings: Record<string, string>;
-};
+import {
+  loadReviews,
+  saveReview,
+  storageMode,
+  type Review,
+} from '@/lib/review-storage';
 const empty: Review = { decision: 'Unreviewed', notes: '', findings: {} };
 export default function Home() {
   const [selected, setSelected] = useState('CALL-003');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All calls');
   const [reviews, setReviews] = useState<Record<string, Review>>({});
-  const [drafts, setDrafts] = useState<
-    Record<string, Pick<Review, 'decision' | 'notes'>>
-  >({});
+  const [drafts, setDrafts] = useState<Record<string, Review>>({});
+  const [saving, setSaving] = useState(false);
   const [ready, setReady] = useState(false);
   const [storageError, setStorageError] = useState('');
   const [tab, setTab] = useState('Findings');
@@ -45,48 +45,43 @@ export default function Home() {
   const [showRules, setShowRules] = useState(false);
   const [notice, setNotice] = useState('');
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('soundsense-reviews-v1');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          const valid: Record<string, Review> = {};
-          for (const c of calls) {
-            const r = parsed[c.id];
-            if (
-              r &&
-              [
-                'Unreviewed',
-                'Acceptable',
-                'Needs correction',
-                'Uncertain',
-              ].includes(r.decision) &&
-              typeof r.notes === 'string' &&
-              r.findings &&
-              typeof r.findings === 'object'
-            )
-              valid[c.id] = r;
-          }
-          setReviews(valid);
-        }
-      }
-    } catch {
-      setStorageError(
-        'Saved reviews could not be loaded. Export your work before leaving.',
-      );
-    }
-    setReady(true);
-  }, []);
-  useEffect(() => {
-    if (ready)
+    let cancelled = false;
+    async function load() {
       try {
-        localStorage.setItem('soundsense-reviews-v1', JSON.stringify(reviews));
+        const parsed = await loadReviews();
+        const valid: Record<string, Review> = {};
+        for (const c of calls) {
+          const r = parsed?.[c.id];
+          if (
+            r &&
+            [
+              'Unreviewed',
+              'Acceptable',
+              'Needs correction',
+              'Uncertain',
+            ].includes(r.decision) &&
+            typeof r.notes === 'string' &&
+            r.findings &&
+            typeof r.findings === 'object'
+          )
+            valid[c.id] = r;
+        }
+        if (!cancelled) {
+          setReviews(valid);
+          setReady(true);
+        }
       } catch {
-        setStorageError(
-          'Browser storage unavailable. Export your work before leaving.',
-        );
+        if (!cancelled)
+          setStorageError(
+            `Could not load reviews from ${storageMode}. Check your connection and database setup, then reload to retry.`,
+          );
       }
-  }, [reviews, ready]);
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     if (!showRules) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -116,29 +111,27 @@ export default function Home() {
   const findings = findingsFor(selected);
   const review = reviews[selected] ?? empty;
   const draft = drafts[selected] ?? review;
-  const hasUnsavedChanges =
-    draft.decision !== review.decision || draft.notes !== review.notes;
-  function updateDraft(patch: Partial<Pick<Review, 'decision' | 'notes'>>) {
-    setDrafts((old) => ({
-      ...old,
-      [selected]: { decision: draft.decision, notes: draft.notes, ...patch },
-    }));
+  const hasUnsavedChanges = JSON.stringify(draft) !== JSON.stringify(review);
+  function updateDraft(patch: Partial<Review>) {
+    setDrafts((old) => ({ ...old, [selected]: { ...draft, ...patch } }));
     setNotice('');
   }
-  function saveDecision() {
-    const next = {
-      ...reviews,
-      [selected]: { ...review, decision: draft.decision, notes: draft.notes },
-    };
+  async function saveDecision() {
+    const callId = selected;
+    const snapshot = { ...draft };
+    setSaving(true);
+    setNotice('');
     try {
-      localStorage.setItem('soundsense-reviews-v1', JSON.stringify(next));
-      setReviews(next);
+      await saveReview(callId, snapshot);
+      setReviews((old) => ({ ...old, [callId]: snapshot }));
       setStorageError('');
-      setNotice(`Decision saved for ${selected}.`);
+      setNotice(`Decision saved for ${callId} · ${storageMode}.`);
     } catch {
       setStorageError(
         'Decision could not be saved. Your draft is still available; try saving again.',
       );
+    } finally {
+      setSaving(false);
     }
   }
   const reviewed = calls.filter(
@@ -153,12 +146,6 @@ export default function Home() {
         (filter === 'Flagged' && findingsFor(c.id).length > 0) ||
         (filter === 'Clear' && !findingsFor(c.id).length)),
   );
-  function update(patch: Partial<Review>) {
-    setReviews((old) => ({
-      ...old,
-      [selected]: { ...(old[selected] ?? empty), ...patch },
-    }));
-  }
   function choose(id: string) {
     setSelected(id);
     setActive([]);
@@ -486,16 +473,16 @@ export default function Home() {
                               {['Confirm', 'Dismiss', 'Unsure'].map((d) => (
                                 <button
                                   key={d}
-                                  aria-pressed={review.findings[f.id] === d}
+                                  aria-pressed={draft.findings[f.id] === d}
                                   className={
-                                    review.findings[f.id] === d ? 'chosen' : ''
+                                    draft.findings[f.id] === d ? 'chosen' : ''
                                   }
                                   onClick={() =>
-                                    update({
+                                    updateDraft({
                                       findings: {
-                                        ...review.findings,
+                                        ...draft.findings,
                                         [f.id]:
-                                          review.findings[f.id] === d ? '' : d,
+                                          draft.findings[f.id] === d ? '' : d,
                                       },
                                     })
                                   }
@@ -575,12 +562,12 @@ export default function Home() {
                     />
                     <p className="saved" role="status">
                       {hasUnsavedChanges
-                        ? 'Unsaved changes. Click Save decision to save your outcome and notes.'
+                        ? 'Unsaved changes. Click Save decision to save your review.'
                         : notice ||
-                          'Changes are saved only when you click Save decision.'}
+                          `Storage: ${storageMode}. Changes are saved only when you click Save decision.`}
                     </p>
                     <div className="decision-count">
-                      {Object.values(review.findings).filter(Boolean).length} of{' '}
+                      {Object.values(draft.findings).filter(Boolean).length} of{' '}
                       {findings.length} suggestions assessed
                     </div>
                   </div>
@@ -596,13 +583,19 @@ export default function Home() {
                 <button
                   className="button primary"
                   disabled={
-                    !ready || (tab === 'Decision' && !hasUnsavedChanges)
+                    !ready ||
+                    saving ||
+                    (tab === 'Decision' && !hasUnsavedChanges)
                   }
                   onClick={() =>
                     tab === 'Decision' ? saveDecision() : setTab('Decision')
                   }
                 >
-                  {tab === 'Decision' ? 'Save decision' : 'Make a decision'}
+                  {tab === 'Decision'
+                    ? saving
+                      ? 'Saving…'
+                      : 'Save decision'
+                    : 'Make a decision'}
                   <ArrowRight size={15} />
                 </button>
               </div>
@@ -613,7 +606,7 @@ export default function Home() {
               <ShieldCheck size={13} /> Grounded in the transcript. Guided by
               the rules.
             </span>
-            <span>20 fictional calls · No audio recordings</span>
+            <span>{storageMode} storage · 20 fictional calls</span>
           </footer>
           <div className="sr-only" role="status">
             {notice}
