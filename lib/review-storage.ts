@@ -9,25 +9,22 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 export const storageMode = url || key ? 'Supabase' : 'Local browser';
 let client: SupabaseClient | undefined;
-let sessionPromise: Promise<string> | undefined;
-async function database() {
-  if (!url || !key) throw new Error('Supabase is not configured.');
+export function getSupabaseClient() {
+  if (!url || !key)
+    throw new Error(
+      'Supabase URL and publishable key must both be configured.',
+    );
   client ??= createClient(url, key);
-  const db = client;
-  sessionPromise ??= (async () => {
-    const { data, error } = await db.auth.getSession();
-    if (error) throw error;
-    if (data.session) return data.session.user.id;
-    const result = await db.auth.signInAnonymously();
-    if (result.error) throw result.error;
-    if (!result.data.user)
-      throw new Error('Could not create a reviewer session.');
-    return result.data.user.id;
-  })().catch((error) => {
-    sessionPromise = undefined;
-    throw error;
-  });
-  return { db, userId: await sessionPromise };
+  return client;
+}
+async function database() {
+  const db = getSupabaseClient();
+  const { data, error } = await db.auth.getSession();
+  if (error) throw error;
+  if (!data.session || data.session.user.is_anonymous) {
+    throw new Error('Sign in to load or save reviews.');
+  }
+  return { db, userId: data.session.user.id };
 }
 export async function loadReviews(): Promise<Record<string, Review>> {
   if (storageMode === 'Local browser') {

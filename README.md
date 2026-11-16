@@ -39,11 +39,14 @@ Tests verify that every claim is actually in the summary, every evidence turn ex
 
 1. Create a project at https://supabase.com/dashboard (the app does not create one automatically).
 2. In the SQL editor, run `supabase/migrations/202611160001_create_reviews.sql` once.
-3. In Authentication → Sign In / Providers, enable **Allow anonymous sign-ins**.
+3. In Authentication → Sign In / Providers, enable **Email**. In Authentication → Users, create the demo user with an email and password and confirm its email. New anonymous sessions are no longer used; you may disable anonymous sign-ins.
 4. Copy `.env.example` to `.env.local`. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` using the project URL and publishable key from the project Connect/API settings. Never use a secret or service-role key in these variables.
-5. Restart `npm run dev`. The decision panel should show **Storage: Supabase**. Save a review, reload, and verify it is restored. In the Supabase table editor, confirm the row exists in `reviews`.
+5. Set `NEXT_PUBLIC_DEMO_EMAIL` to the confirmed demo user’s email. The login username `test` maps to it; the password is verified by Supabase Auth, never stored in this repository or the reviews table. Add this variable in Vercel as well and redeploy.
+6. Restart `npm run dev`. Sign in with `test` (or the actual account email) and the password you created. The decision panel should show **Storage: Supabase**. Save a review, reload, and verify it is restored. In the Supabase table editor, confirm the row exists in `reviews`.
 
-The database stores one review per call per authenticated user. Anonymous authentication preserves the current no-login experience, and row-level security restricts reads and writes to the session owner's rows. Clearing browser storage loses that anonymous identity; another browser gets a separate identity and cannot retrieve those reviews. Permanent authentication would be needed for cross-device access. See [Supabase anonymous sign-ins](https://supabase.com/docs/guides/auth/auth-anonymous) and [row-level security](https://supabase.com/docs/guides/database/postgres/row-level-security).
+The database stores one review per call per authenticated user. Email/password sign-in lets the same account load saved reviews in Firefox, incognito and other browsers. Reviewers using the demo account share reviews and can overwrite each other's saved work. Reload to see another browser’s latest changes; there is no live subscription. Sign out clears the mounted workspace and drafts and signs out only this browser. Existing row-level security policies remain unchanged. See [Supabase password sign-in](https://supabase.com/docs/reference/javascript/auth-signinwithpassword).
+
+Reviews saved by earlier anonymous identities stay attached to those identities and are not automatically transferred into the demo account. Export any guest reviews before switching; the SQL migration does not need to be rerun.
 
 When neither environment variable is set, the existing local browser mode remains available. Existing local reviews are not uploaded automatically. Once Supabase is configured, failures are displayed and never silently fall back to local saving. Outcome, notes and finding assessments all require **Save decision**; failed saves retain the draft, and exports contain only successfully saved reviews. The supplied calls and curated findings remain repository fixtures; only reviewer work is stored in the database. Concurrent edits in separate tabs use last-write-wins semantics.
 

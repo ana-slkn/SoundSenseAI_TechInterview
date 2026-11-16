@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { AuthGate } from '@/components/auth-gate';
 import {
   Activity,
   ArrowDownToLine,
@@ -32,6 +33,25 @@ import {
 } from '@/lib/review-storage';
 const empty: Review = { decision: 'Unreviewed', notes: '', findings: {} };
 export default function Home() {
+  return (
+    <AuthGate>
+      {(account) => (
+        <ReviewWorkspace
+          key={account.id}
+          accountLabel={account.label}
+          onSignOut={account.signOut}
+        />
+      )}
+    </AuthGate>
+  );
+}
+function ReviewWorkspace({
+  accountLabel,
+  onSignOut,
+}: {
+  accountLabel: string;
+  onSignOut?: () => Promise<void>;
+}) {
   const [selected, setSelected] = useState('CALL-003');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All calls');
@@ -225,7 +245,29 @@ export default function Home() {
               <span /> Exercise dataset
             </span>
             <div className="header-divider" />
-            <span className="reviewer-label">Reviewer workspace</span>
+            <span className="reviewer-label" title={accountLabel}>
+              {accountLabel}
+            </span>
+            {storageMode === 'Supabase' && (
+              <button
+                className="button secondary"
+                disabled={!onSignOut || saving}
+                onClick={() => {
+                  if (
+                    Object.entries(drafts).some(
+                      ([id, draft]) =>
+                        JSON.stringify(draft) !==
+                        JSON.stringify(reviews[id] ?? empty),
+                    ) &&
+                    !window.confirm('Sign out and discard your unsaved drafts?')
+                  )
+                    return;
+                  void onSignOut?.();
+                }}
+              >
+                Sign out
+              </button>
+            )}
             <div className="avatar small">QA</div>
           </div>
         </header>
